@@ -3,22 +3,60 @@ name: Terraform Feature Pipeline
 on:
   push:
     branches:
+      - main
       - features
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   scan:
-    name: Scan
+    name: Terraform Scan
     runs-on: ubuntu-latest
 
     steps:
+
+      # 1. Checkout repository
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2. Setup TFLint
       - name: TFLint
         uses: terraform-linters/setup-tflint@v5
 
+      # 3. Initialize TFLint
       - name: Initialize TFLint
         run: tflint --init
 
+      # 4. Run TFLint
       - name: Run TFLint
         run: tflint --recursive
+
+      # 5. Login to Azure using GitHub OIDC
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # 6. Check Azure account
+      - name: Verify Azure Login
+        run: az account show
+
+      # 7. Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # 8. Terraform Init
+      - name: Terraform Init
+        run: terraform init
+
+      # 9. Terraform Validate
+      - name: Terraform Validate
+        run: terraform validate
+
+      # 10. Terraform Plan
+      - name: Terraform Plan
+        run: terraform plan
