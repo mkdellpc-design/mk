@@ -22,35 +22,28 @@ jobs:
         uses: actions/checkout@v4
 
 
-      # 2. Install TFLint
-      - name: Install TFLint
-        shell: powershell
-        run: |
-          winget install --id TerraformLinters.tflint --exact --accept-source-agreements --accept-package-agreements
-
-
-      # 3. Verify TFLint
+      # 2. Verify TFLint
       - name: Verify TFLint
         shell: powershell
         run: |
           tflint --version
 
 
-      # 4. Initialize TFLint
+      # 3. Initialize TFLint
       - name: Initialize TFLint
         shell: powershell
         run: |
           tflint --init
 
 
-      # 5. Run TFLint
+      # 4. Run TFLint
       - name: Run TFLint
         shell: powershell
         run: |
           tflint --recursive
 
 
-      # 6. Login to Azure using GitHub OIDC
+      # 5. Login to Azure using GitHub OIDC
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -59,33 +52,33 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 
-      # 7. Verify Azure Login
+      # 6. Verify Azure Login
       - name: Verify Azure Login
         shell: powershell
         run: |
           az account show
 
 
-      # 8. Setup Terraform
+      # 7. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
 
-      # 9. Terraform Init
+      # 8. Terraform Init
       - name: Terraform Init
         shell: powershell
         run: |
           terraform init
 
 
-      # 10. Terraform Validate
+      # 9. Terraform Validate
       - name: Terraform Validate
         shell: powershell
         run: |
           terraform validate
 
 
-      # 11. Terraform Plan
+      # 10. Terraform Plan
       - name: Terraform Plan
         shell: powershell
         run: |
