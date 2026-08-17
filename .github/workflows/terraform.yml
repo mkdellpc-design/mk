@@ -18,32 +18,48 @@ jobs:
     steps:
 
       # ==========================================================
-      # 1. Checkout repository
+      # 1. Checkout repository manually
       # ==========================================================
       - name: Checkout code
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $repo = "https://github.com/${{ github.repository }}.git"
+
+          Write-Host "Initializing Git repository..."
           git init .
-          git remote add origin "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git"
-          git fetch --depth=1 origin $env:GITHUB_SHA
+
+          Write-Host "Adding GitHub remote..."
+          git remote add origin $repo
+
+          Write-Host "Preparing GitHub authentication..."
+          $auth = [Convert]::ToBase64String(
+            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GH_TOKEN")
+          )
+
+          Write-Host "Fetching repository..."
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch --depth=1 origin $env:GITHUB_SHA
+
+          Write-Host "Checking out commit..."
           git checkout --detach $env:GITHUB_SHA
+
+          Write-Host "Repository checkout completed."
 
 
       # ==========================================================
-      # 2. Verify required tools
+      # 2. Verify installed tools
       # ==========================================================
       - name: Verify Tools
         shell: powershell
         run: |
-          Write-Host "Checking Azure CLI..."
+          Write-Host "===== Azure CLI ====="
           az version
 
-          Write-Host "Checking Terraform..."
+          Write-Host "===== Terraform ====="
           terraform version
 
-          Write-Host "Checking TFLint..."
+          Write-Host "===== TFLint ====="
           tflint --version
 
 
@@ -66,31 +82,68 @@ jobs:
 
 
       # ==========================================================
-      # 5. Get GitHub OIDC Token
+      # 5. Request GitHub OIDC token
       # ==========================================================
       - name: Get OIDC Token
         shell: powershell
         env:
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+          OIDC_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          OIDC_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
         run: |
-          Write-Host "GitHub OIDC permission enabled."
-          Write-Host "OIDC token request environment is available."
+          Write-Host "Requesting GitHub OIDC token..."
+
+          $url = "$env:OIDC_URL&audience=api://AzureADTokenExchange"
+
+          $response = Invoke-RestMethod `
+            -Uri $url `
+            -Method Get `
+            -Headers @{
+              Authorization = "Bearer $env:OIDC_TOKEN"
+            }
+
+          $response.value | Out-File -FilePath "$env:RUNNER_TEMP\azure-oidc-token.txt" -Encoding ascii
+
+          Write-Host "OIDC token received successfully."
 
 
       # ==========================================================
-      # 6. Azure Login using OIDC
+      # 6. Login to Azure using OIDC
       # ==========================================================
       - name: Azure Login using OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        shell: powershell
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          $federatedToken = Get-Content "$env:RUNNER_TEMP\azure-oidc-token.txt" -Raw
+
+          Write-Host "Logging into Azure..."
+
+          az login `
+            --service-principal `
+            --username $env:AZURE_CLIENT_ID `
+            --tenant $env:AZURE_TENANT_ID `
+            --federated-token $federatedToken
+
+          Write-Host "Azure login successful."
 
 
       # ==========================================================
-      # 7. Verify Azure Login
+      # 7. Set Azure subscription
+      # ==========================================================
+      - name: Set Azure Subscription
+        shell: powershell
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+
+          Write-Host "Azure subscription selected."
+
+
+      # ==========================================================
+      # 8. Verify Azure login
       # ==========================================================
       - name: Verify Azure Login
         shell: powershell
@@ -99,25 +152,7 @@ jobs:
 
 
       # ==========================================================
-      # 8. Set Azure Subscription
-      # ==========================================================
-      - name: Set Azure Subscription
-        shell: powershell
-        run: |
-          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-
-
-      # ==========================================================
-      # 9. Verify Azure Subscription
-      # ==========================================================
-      - name: Verify Subscription
-        shell: powershell
-        run: |
-          az account show --query "{Name:name, Subscription:id, Tenant:tenantId}" -o table
-
-
-      # ==========================================================
-      # 10. Terraform Init
+      # 9. Terraform Init
       # ==========================================================
       - name: Terraform Init
         shell: powershell
@@ -126,7 +161,7 @@ jobs:
 
 
       # ==========================================================
-      # 11. Terraform Validate
+      # 10. Terraform Validate
       # ==========================================================
       - name: Terraform Validate
         shell: powershell
@@ -135,10 +170,9 @@ jobs:
 
 
       # ==========================================================
-      # 12. Terraform Plan
+      # 11. Terraform Plan
       # ==========================================================
       - name: Terraform Plan
         shell: powershell
         run: |
           terraform plan
-        #final 
