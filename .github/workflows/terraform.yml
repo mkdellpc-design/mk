@@ -23,7 +23,9 @@ jobs:
 
       # 2. Setup TFLint
       - name: TFLint
-        uses: terraform-linters/setup-tflint@v5
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: latest
 
       # 3. Initialize TFLint
       - name: Initialize TFLint
