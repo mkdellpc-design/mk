@@ -17,14 +17,16 @@ jobs:
 
     steps:
 
-      # 1. Checkout repository without actions/checkout
+      # 1. Checkout repository
       - name: Checkout code
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git -c http.extraheader="AUTHORIZATION: bearer $env:GH_TOKEN" clone https://github.com/${{ github.repository }}.git .
-          git checkout $env:GITHUB_SHA
+          git init .
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          git -c http.extraheader="AUTHORIZATION: bearer $env:GH_TOKEN" fetch --depth=1 origin $env:GITHUB_SHA
+          git checkout --detach $env:GITHUB_SHA
 
 
       # 2. Verify installed tools
