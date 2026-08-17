@@ -17,20 +17,22 @@ jobs:
 
     steps:
 
-      # 1. Checkout repository using GitHub token
+      # 1. Checkout repository without actions/checkout
       - name: Checkout code
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git clone https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git .
+          git -c http.extraheader="AUTHORIZATION: bearer $env:GH_TOKEN" clone https://github.com/${{ github.repository }}.git .
           git checkout $env:GITHUB_SHA
 
 
-      # 2. Verify TFLint
-      - name: Verify TFLint
+      # 2. Verify installed tools
+      - name: Verify Tools
         shell: powershell
         run: |
+          az version
+          terraform version
           tflint --version
 
 
@@ -48,42 +50,71 @@ jobs:
           tflint --recursive
 
 
-      # 5. Login to Azure using GitHub OIDC
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # 5. Get GitHub OIDC Token
+      - name: Get OIDC Token
+        shell: powershell
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+        run: |
+          $url = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange"
+
+          $response = Invoke-RestMethod `
+            -Uri $url `
+            -Headers @{
+              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+            }
+
+          $response.value | Out-File -FilePath "$env:RUNNER_TEMP\azure-oidc-token.txt" -Encoding ascii
 
 
-      # 6. Verify Azure Login
+      # 6. Login to Azure using OIDC
+      - name: Azure Login using OIDC
+        shell: powershell
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          $FEDERATED_TOKEN = Get-Content "$env:RUNNER_TEMP\azure-oidc-token.txt"
+
+          az login `
+            --service-principal `
+            --username $env:AZURE_CLIENT_ID `
+            --tenant $env:AZURE_TENANT_ID `
+            --federated-token $FEDERATED_TOKEN
+
+
+      # 7. Select Azure Subscription
+      - name: Set Azure Subscription
+        shell: powershell
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+
+
+      # 8. Verify Azure Login
       - name: Verify Azure Login
         shell: powershell
         run: |
           az account show
 
 
-      # 7. Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
-
-
-      # 8. Terraform Init
+      # 9. Terraform Init
       - name: Terraform Init
         shell: powershell
         run: |
           terraform init
 
 
-      # 9. Terraform Validate
+      # 10. Terraform Validate
       - name: Terraform Validate
         shell: powershell
         run: |
           terraform validate
 
 
-      # 10. Terraform Plan
+      # 11. Terraform Plan
       - name: Terraform Plan
         shell: powershell
         run: |
