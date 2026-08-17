@@ -1,0 +1,24 @@
+name: Terraform Feature Pipeline
+
+on:
+  push:
+    branches:
+      - features
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v5
+
+      - name: Initialize TFLint
+        run: tflint --init
+
+      - name: Run TFLint
+        run: tflint --recursive
