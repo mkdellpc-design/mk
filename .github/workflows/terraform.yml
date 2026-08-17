@@ -21,21 +21,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Setup TFLint
-      - name: TFLint
-        uses: terraform-linters/setup-tflint@v6
-        with:
-          tflint_version: latest
 
-      # 3. Initialize TFLint
+      # 2. Install TFLint
+      - name: Install TFLint
+        shell: powershell
+        run: |
+          winget install --id TerraformLinters.tflint --exact --accept-source-agreements --accept-package-agreements
+
+
+      # 3. Verify TFLint
+      - name: Verify TFLint
+        shell: powershell
+        run: |
+          tflint --version
+
+
+      # 4. Initialize TFLint
       - name: Initialize TFLint
-        run: tflint --init
+        shell: powershell
+        run: |
+          tflint --init
 
-      # 4. Run TFLint
+
+      # 5. Run TFLint
       - name: Run TFLint
-        run: tflint --recursive
+        shell: powershell
+        run: |
+          tflint --recursive
 
-      # 5. Login to Azure using GitHub OIDC
+
+      # 6. Login to Azure using GitHub OIDC
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -43,22 +58,35 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # 6. Check Azure account
-      - name: Verify Azure Login
-        run: az account show
 
-      # 7. Setup Terraform
+      # 7. Verify Azure Login
+      - name: Verify Azure Login
+        shell: powershell
+        run: |
+          az account show
+
+
+      # 8. Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # 8. Terraform Init
+
+      # 9. Terraform Init
       - name: Terraform Init
-        run: terraform init
+        shell: powershell
+        run: |
+          terraform init
 
-      # 9. Terraform Validate
+
+      # 10. Terraform Validate
       - name: Terraform Validate
-        run: terraform validate
+        shell: powershell
+        run: |
+          terraform validate
 
-      # 10. Terraform Plan
+
+      # 11. Terraform Plan
       - name: Terraform Plan
-        run: terraform plan
+        shell: powershell
+        run: |
+          terraform plan
