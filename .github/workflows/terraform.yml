@@ -25,24 +25,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $repo = "https://github.com/${{ github.repository }}.git"
+          Write-Host "Starting repository checkout..."
 
-          Write-Host "Initializing Git repository..."
+          if (Test-Path ".git") {
+            Write-Host "Removing previous Git metadata..."
+            Remove-Item ".git" -Recurse -Force
+          }
+
           git init .
 
-          Write-Host "Adding GitHub remote..."
-          git remote add origin $repo
+          git remote add origin "https://github.com/${{ github.repository }}.git"
 
-          Write-Host "Preparing GitHub authentication..."
           $auth = [Convert]::ToBase64String(
             [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GH_TOKEN")
           )
 
-          Write-Host "Fetching repository..."
-          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch --depth=1 origin $env:GITHUB_SHA
+          Write-Host "Fetching GitHub repository..."
 
-          Write-Host "Checking out commit..."
+          git -c http.extraheader="AUTHORIZATION: basic $auth" `
+            fetch --depth=1 origin $env:GITHUB_SHA
+
           git checkout --detach $env:GITHUB_SHA
+
+          Write-Host "Cleaning untracked files..."
+
+          git clean -fdx
 
           Write-Host "Repository checkout completed."
 
@@ -53,13 +60,19 @@ jobs:
       - name: Verify Tools
         shell: powershell
         run: |
-          Write-Host "===== Azure CLI ====="
+          Write-Host "===================================="
+          Write-Host "Azure CLI"
+          Write-Host "===================================="
           az version
 
-          Write-Host "===== Terraform ====="
+          Write-Host "===================================="
+          Write-Host "Terraform"
+          Write-Host "===================================="
           terraform version
 
-          Write-Host "===== TFLint ====="
+          Write-Host "===================================="
+          Write-Host "TFLint"
+          Write-Host "===================================="
           tflint --version
 
 
@@ -69,7 +82,11 @@ jobs:
       - name: Initialize TFLint
         shell: powershell
         run: |
+          Write-Host "Initializing TFLint..."
+
           tflint --init
+
+          Write-Host "TFLint initialization completed."
 
 
       # ==========================================================
@@ -78,47 +95,76 @@ jobs:
       - name: Run TFLint
         shell: powershell
         run: |
+          Write-Host "Running TFLint..."
+
           tflint --recursive
+
+          Write-Host "TFLint completed."
 
 
       # ==========================================================
-      # 5. Request GitHub OIDC token
+      # 5. Get GitHub OIDC Token
       # ==========================================================
       - name: Get OIDC Token
         shell: powershell
-        env:
-          OIDC_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          OIDC_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
         run: |
           Write-Host "Requesting GitHub OIDC token..."
 
-          $url = "$env:OIDC_URL&audience=api://AzureADTokenExchange"
+          if ([string]::IsNullOrWhiteSpace($env:ACTIONS_ID_TOKEN_REQUEST_URL)) {
+            Write-Error "ACTIONS_ID_TOKEN_REQUEST_URL is empty."
+            exit 1
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)) {
+            Write-Error "ACTIONS_ID_TOKEN_REQUEST_TOKEN is empty."
+            exit 1
+          }
+
+          $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange"
+
+          Write-Host "OIDC request URL is available."
 
           $response = Invoke-RestMethod `
-            -Uri $url `
+            -Uri $oidcUrl `
             -Method Get `
             -Headers @{
-              Authorization = "Bearer $env:OIDC_TOKEN"
+              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
             }
 
-          $response.value | Out-File -FilePath "$env:RUNNER_TEMP\azure-oidc-token.txt" -Encoding ascii
+          if ([string]::IsNullOrWhiteSpace($response.value)) {
+            Write-Error "GitHub OIDC token was not returned."
+            exit 1
+          }
 
-          Write-Host "OIDC token received successfully."
+          $tokenPath = Join-Path $env:RUNNER_TEMP "azure-oidc-token.txt"
+
+          $response.value | Out-File `
+            -FilePath $tokenPath `
+            -Encoding ascii `
+            -NoNewline
+
+          Write-Host "GitHub OIDC token received successfully."
 
 
       # ==========================================================
-      # 6. Login to Azure using OIDC
+      # 6. Azure Login using OIDC
       # ==========================================================
       - name: Azure Login using OIDC
         shell: powershell
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          $federatedToken = Get-Content "$env:RUNNER_TEMP\azure-oidc-token.txt" -Raw
+          Write-Host "Logging into Azure using federated identity..."
 
-          Write-Host "Logging into Azure..."
+          $tokenPath = Join-Path $env:RUNNER_TEMP "azure-oidc-token.txt"
+
+          if (-not (Test-Path $tokenPath)) {
+            Write-Error "OIDC token file was not found."
+            exit 1
+          }
+
+          $federatedToken = Get-Content $tokenPath -Raw
 
           az login `
             --service-principal `
@@ -126,29 +172,51 @@ jobs:
             --tenant $env:AZURE_TENANT_ID `
             --federated-token $federatedToken
 
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Azure login failed."
+            exit 1
+          }
+
           Write-Host "Azure login successful."
 
 
       # ==========================================================
-      # 7. Set Azure subscription
+      # 7. Set Azure Subscription
       # ==========================================================
       - name: Set Azure Subscription
         shell: powershell
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
-          az account set --subscription $env:AZURE_SUBSCRIPTION_ID
+          Write-Host "Setting Azure subscription..."
+
+          az account set `
+            --subscription $env:AZURE_SUBSCRIPTION_ID
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to set Azure subscription."
+            exit 1
+          }
 
           Write-Host "Azure subscription selected."
 
 
       # ==========================================================
-      # 8. Verify Azure login
+      # 8. Verify Azure Login
       # ==========================================================
       - name: Verify Azure Login
         shell: powershell
         run: |
-          az account show
+          Write-Host "Verifying Azure authentication..."
+
+          az account show `
+            --query "{Name:name, Subscription:id, Tenant:tenantId}" `
+            -o table
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Azure account verification failed."
+            exit 1
+          }
 
 
       # ==========================================================
@@ -157,7 +225,16 @@ jobs:
       - name: Terraform Init
         shell: powershell
         run: |
-          terraform init
+          Write-Host "Initializing Terraform..."
+
+          terraform init -input=false
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Terraform init failed."
+            exit 1
+          }
+
+          Write-Host "Terraform init completed."
 
 
       # ==========================================================
@@ -166,7 +243,16 @@ jobs:
       - name: Terraform Validate
         shell: powershell
         run: |
+          Write-Host "Validating Terraform configuration..."
+
           terraform validate
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Terraform validation failed."
+            exit 1
+          }
+
+          Write-Host "Terraform validation completed."
 
 
       # ==========================================================
@@ -175,4 +261,13 @@ jobs:
       - name: Terraform Plan
         shell: powershell
         run: |
-          terraform plan
+          Write-Host "Creating Terraform plan..."
+
+          terraform plan -input=false
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Terraform plan failed."
+            exit 1
+          }
+
+          Write-Host "Terraform plan completed successfully."
