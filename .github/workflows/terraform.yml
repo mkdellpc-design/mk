@@ -17,98 +17,103 @@ jobs:
 
     steps:
 
-      # ==========================================================
-      # 1. Checkout repository manually
-      # ==========================================================
+      # ==========================================
+      # 1. Checkout Repository
+      # ==========================================
       - name: Checkout code
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          Write-Host "Starting repository checkout..."
+        uses: actions/checkout@v4
 
-          if (Test-Path ".git") {
-            Write-Host "Removing previous Git metadata..."
-            Remove-Item ".git" -Recurse -Force
-          }
-
-          git init .
-
-          git remote add origin "https://github.com/${{ github.repository }}.git"
-
-          $auth = [Convert]::ToBase64String(
-            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GH_TOKEN")
-          )
-
-          Write-Host "Fetching GitHub repository..."
-
-          git -c http.extraheader="AUTHORIZATION: basic $auth" `
-            fetch --depth=1 origin $env:GITHUB_SHA
-
-          git checkout --detach $env:GITHUB_SHA
-
-          Write-Host "Cleaning untracked files..."
-
-          git clean -fdx
-
-          Write-Host "Repository checkout completed."
-
-
-      # ==========================================================
-      # 2. Verify installed tools
-      # ==========================================================
-      - name: Verify Tools
+      # ==========================================
+      # 2. Verify Workspace
+      # ==========================================
+      - name: Verify Workspace
         shell: powershell
         run: |
           Write-Host "===================================="
-          Write-Host "Azure CLI"
+          Write-Host "GitHub Workspace"
           Write-Host "===================================="
-          az version
 
-          Write-Host "===================================="
-          Write-Host "Terraform"
-          Write-Host "===================================="
+          Write-Host "Workspace:"
+          Write-Host $env:GITHUB_WORKSPACE
+
+          Write-Host "Current Directory:"
+          Get-Location
+
+          Write-Host ""
+          Write-Host "Repository Files:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE
+
+          Write-Host ""
+          Write-Host "Terraform Files:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter *.tf -Recurse
+
+      # ==========================================
+      # 3. Verify Terraform
+      # ==========================================
+      - name: Verify Terraform
+        shell: powershell
+        working-directory: ${{ github.workspace }}
+        run: |
+          Write-Host "Terraform Version:"
           terraform version
 
-          Write-Host "===================================="
-          Write-Host "TFLint"
-          Write-Host "===================================="
+      # ==========================================
+      # 4. Verify TFLint
+      # ==========================================
+      - name: Verify TFLint
+        shell: powershell
+        working-directory: ${{ github.workspace }}
+        run: |
+          Write-Host "TFLint Version:"
           tflint --version
 
-
-      # ==========================================================
-      # 3. Initialize TFLint
-      # ==========================================================
+      # ==========================================
+      # 5. Initialize TFLint
+      # ==========================================
       - name: Initialize TFLint
         shell: powershell
+        working-directory: ${{ github.workspace }}
         run: |
           Write-Host "Initializing TFLint..."
 
           tflint --init
 
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "TFLint initialization failed."
+            exit 1
+          }
+
           Write-Host "TFLint initialization completed."
 
-
-      # ==========================================================
-      # 4. Run TFLint
-      # ==========================================================
+      # ==========================================
+      # 6. Run TFLint
+      # ==========================================
       - name: Run TFLint
         shell: powershell
+        working-directory: ${{ github.workspace }}
         run: |
           Write-Host "Running TFLint..."
 
           tflint --recursive
 
-          Write-Host "TFLint completed."
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "TFLint scan failed."
+            exit 1
+          }
 
+          Write-Host "TFLint scan completed successfully."
 
-      # ==========================================================
-      # 5. Get GitHub OIDC Token
-      # ==========================================================
+      # ==========================================
+      # 7. Get GitHub OIDC Token
+      # ==========================================
       - name: Get OIDC Token
         shell: powershell
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
         run: |
-          Write-Host "Requesting GitHub OIDC token..."
+          Write-Host "GitHub OIDC token endpoint:"
+          Write-Host $env:ACTIONS_ID_TOKEN_REQUEST_URL
 
           if ([string]::IsNullOrWhiteSpace($env:ACTIONS_ID_TOKEN_REQUEST_URL)) {
             Write-Error "ACTIONS_ID_TOKEN_REQUEST_URL is empty."
@@ -120,111 +125,54 @@ jobs:
             exit 1
           }
 
-          $oidcUrl = "$env:ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange"
+          Write-Host "OIDC environment variables are available."
 
-          Write-Host "OIDC request URL is available."
+      # ==========================================
+      # 8. Azure Login using OIDC
+      # ==========================================
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-          $response = Invoke-RestMethod `
-            -Uri $oidcUrl `
-            -Method Get `
-            -Headers @{
-              Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN"
-            }
-
-          if ([string]::IsNullOrWhiteSpace($response.value)) {
-            Write-Error "GitHub OIDC token was not returned."
-            exit 1
-          }
-
-          $tokenPath = Join-Path $env:RUNNER_TEMP "azure-oidc-token.txt"
-
-          $response.value | Out-File `
-            -FilePath $tokenPath `
-            -Encoding ascii `
-            -NoNewline
-
-          Write-Host "GitHub OIDC token received successfully."
-
-
-      # ==========================================================
-      # 6. Azure Login using OIDC
-      # ==========================================================
-      - name: Azure Login using OIDC
+      # ==========================================
+      # 9. Verify Azure Login
+      # ==========================================
+      - name: Verify Azure Login
         shell: powershell
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
-          Write-Host "Logging into Azure using federated identity..."
+          Write-Host "Checking Azure login..."
 
-          $tokenPath = Join-Path $env:RUNNER_TEMP "azure-oidc-token.txt"
-
-          if (-not (Test-Path $tokenPath)) {
-            Write-Error "OIDC token file was not found."
-            exit 1
-          }
-
-          $federatedToken = Get-Content $tokenPath -Raw
-
-          az login `
-            --service-principal `
-            --username $env:AZURE_CLIENT_ID `
-            --tenant $env:AZURE_TENANT_ID `
-            --federated-token $federatedToken
+          az account show
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Azure login failed."
+            Write-Error "Azure login verification failed."
             exit 1
           }
 
           Write-Host "Azure login successful."
 
-
-      # ==========================================================
-      # 7. Set Azure Subscription
-      # ==========================================================
-      - name: Set Azure Subscription
-        shell: powershell
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: |
-          Write-Host "Setting Azure subscription..."
-
-          az account set `
-            --subscription $env:AZURE_SUBSCRIPTION_ID
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to set Azure subscription."
-            exit 1
-          }
-
-          Write-Host "Azure subscription selected."
-
-
-      # ==========================================================
-      # 8. Verify Azure Login
-      # ==========================================================
-      - name: Verify Azure Login
-        shell: powershell
-        run: |
-          Write-Host "Verifying Azure authentication..."
-
-          az account show `
-            --query "{Name:name, Subscription:id, Tenant:tenantId}" `
-            -o table
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Azure account verification failed."
-            exit 1
-          }
-
-
-      # ==========================================================
-      # 9. Terraform Init
-      # ==========================================================
+      # ==========================================
+      # 10. Terraform Init
+      # ==========================================
       - name: Terraform Init
         shell: powershell
+        working-directory: ${{ github.workspace }}
         run: |
+          Write-Host "===================================="
+          Write-Host "Terraform Init"
+          Write-Host "===================================="
+
+          Write-Host "Current Directory:"
+          Get-Location
+
+          Write-Host ""
+          Write-Host "Terraform Files:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter *.tf
+
+          Write-Host ""
           Write-Host "Initializing Terraform..."
 
           terraform init -input=false
@@ -234,15 +182,27 @@ jobs:
             exit 1
           }
 
-          Write-Host "Terraform init completed."
+          Write-Host "Terraform init completed successfully."
 
-
-      # ==========================================================
-      # 10. Terraform Validate
-      # ==========================================================
+      # ==========================================
+      # 11. Terraform Validate
+      # ==========================================
       - name: Terraform Validate
         shell: powershell
+        working-directory: ${{ github.workspace }}
         run: |
+          Write-Host "===================================="
+          Write-Host "Terraform Validate"
+          Write-Host "===================================="
+
+          Write-Host "Current Directory:"
+          Get-Location
+
+          Write-Host ""
+          Write-Host "Terraform Files:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter *.tf
+
+          Write-Host ""
           Write-Host "Validating Terraform configuration..."
 
           terraform validate
@@ -252,15 +212,32 @@ jobs:
             exit 1
           }
 
-          Write-Host "Terraform validation completed."
+          Write-Host ""
+          Write-Host "Terraform validation completed successfully."
 
-
-      # ==========================================================
-      # 11. Terraform Plan
-      # ==========================================================
+      # ==========================================
+      # 12. Terraform Plan
+      # ==========================================
       - name: Terraform Plan
         shell: powershell
+        working-directory: ${{ github.workspace }}
         run: |
+          Write-Host "===================================="
+          Write-Host "Terraform Plan"
+          Write-Host "===================================="
+
+          Write-Host "Current Directory:"
+          Get-Location
+
+          Write-Host ""
+          Write-Host "GitHub Workspace:"
+          Write-Host $env:GITHUB_WORKSPACE
+
+          Write-Host ""
+          Write-Host "Terraform Files:"
+          Get-ChildItem -Path $env:GITHUB_WORKSPACE -Filter *.tf -Recurse
+
+          Write-Host ""
           Write-Host "Creating Terraform plan..."
 
           terraform plan -input=false
@@ -270,4 +247,15 @@ jobs:
             exit 1
           }
 
+          Write-Host ""
           Write-Host "Terraform plan completed successfully."
+
+      # ==========================================
+      # 13. Finish
+      # ==========================================
+      - name: Pipeline Completed
+        shell: powershell
+        run: |
+          Write-Host "===================================="
+          Write-Host "Terraform Pipeline Completed"
+          Write-Host "===================================="
