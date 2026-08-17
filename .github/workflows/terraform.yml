@@ -13,7 +13,7 @@ permissions:
 jobs:
   scan:
     name: Terraform Scan
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
 
     steps:
 
